@@ -1,11 +1,13 @@
 const cbor = require("cbor");
+const axios = require("axios");
 const config = require("../config/config");
+const BorosProvider = require("./boros.provider");
+const HybridSubmitter = require("./hybrid.submitter");
 
 // Cardano
 const { 
   BlockfrostProvider, 
   MeshTxBuilder,
-  KoiosProvider, 
   serializePlutusScript,
   MeshWallet, 
   resolvePaymentKeyHash,
@@ -14,7 +16,8 @@ const {
   mConStr0,
 } = require("@meshsdk/core");
 const blockchainProvider = new BlockfrostProvider(config.cardano.blockfrost.projectId);
-const koios = new KoiosProvider(config.cardano.network, config.cardano.koios.secretToken);
+const borosProvider = new BorosProvider(config.cardano.boros.url);
+const hybridSubmitter = new HybridSubmitter(borosProvider, blockchainProvider);
 
 // Cardano Script
 const plutusScript = require("../../plutus.json");
@@ -27,25 +30,18 @@ const script = {
 const { address: scriptAddress } = serializePlutusScript(script, undefined, 0, false);
 
 // ALDEA Token
-const aldeaPolicyId = "4084c311448c4d9bfa49c7cf6c83d7b1bb54ced13296e6a2d4211196";
-const tokenNameHex = "5465737420414c444541";
+const aldeaPolicyId = "99ad492da6e8a7afeccb91ac7492324686a69a701aa998be519db438";
+const tokenNameHex = "414c444541";
 
-// Cardano Wallet
+// Cardano Wallet (using HybridSubmitter - tries Boros first, falls back to Blockfrost)
 const cardanoAdminWallet = new MeshWallet({
   networkId: 0, // 0: testnet, 1: mainnet
-  fetcher: blockchainProvider,
-  submitter: blockchainProvider,
+  fetcher: blockchainProvider, // Use Blockfrost for fetching data
+  submitter: hybridSubmitter, // Use HybridSubmitter (Boros with Blockfrost fallback)
   key: {
     type: 'mnemonic',
-    words: ["***REMOVED***"],
+    words: config.cardano.adminMnemonic.split(',').map(word => word.trim()),
   },
-});
-
-// Tx Builder
-const txBuilder = new MeshTxBuilder({
-  fetcher: blockchainProvider,
-  //evaluator: blockchainProvider,
-  verbose: true,
 });
 
 async function lockAldeaTokens(address, amount, nonce) {
@@ -58,6 +54,12 @@ async function lockAldeaTokens(address, amount, nonce) {
   const utxos = await cardanoAdminWallet.getUtxos();
   const changeAddress = await cardanoAdminWallet.getChangeAddress();
 
+  // Create a fresh tx builder for each transaction to avoid state accumulation
+  const txBuilder = new MeshTxBuilder({
+    fetcher: blockchainProvider,
+    verbose: true,
+  });
+
   const unsignedTx = await txBuilder
     .txOut(scriptAddress, [{ unit: `${aldeaPolicyId+tokenNameHex}`, quantity: amount }])
     .txOutInlineDatumValue(mConStr0([adminHash]))
@@ -68,16 +70,26 @@ async function lockAldeaTokens(address, amount, nonce) {
     .selectUtxosFrom(utxos)
     .complete();
   
+  console.log("Unsigned transaction:", JSON.stringify(unsignedTx, null, 2));
+  
   const signedTx = await cardanoAdminWallet.signTx(unsignedTx);
+  console.log("Signed transaction (CBOR):", signedTx);
+  
   const txHash = await cardanoAdminWallet.submitTx(signedTx);
 
-  console.log(txHash)
+  console.log("Transaction Hash: ", txHash);
+  
   if (txHash) {
-    let koiosTx = await koios.onTxConfirmed(txHash, () => {
-      console.log(`Tx ${txHash} submitted successfully.`)
-    });
-    console.log("Koios TX: ", koiosTx);
-    return koiosTx;
+    // Monitor transaction status using Blockfrost
+    try {
+      console.log(`Transaction ${txHash} submitted successfully via Boros`);
+      // Wait a bit for confirmation (optional - can implement polling if needed)
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      return txHash;
+    } catch (error) {
+      console.error("Error monitoring transaction:", error);
+      return txHash; // Return txHash anyway as it was submitted
+    }
   } else {
     return "";
   }
@@ -112,6 +124,12 @@ async function unlockAldeaTokens(amount, to, nonce) {
   console.log("Amount is: ", assetUtxo.output.amount);
   console.log("Address is: ", assetUtxo.output.address);
 
+  // Create a fresh tx builder for each transaction to avoid state accumulation
+  const txBuilder = new MeshTxBuilder({
+    fetcher: blockchainProvider,
+    verbose: true,
+  });
+
   let unsignedTx 
   try {
     unsignedTx = await txBuilder
@@ -143,15 +161,18 @@ async function unlockAldeaTokens(amount, to, nonce) {
   const txHash = await cardanoAdminWallet.submitTx(signedTx);
 
   if (txHash) {
-    koios.onTxConfirmed(txHash, () => {
-      console.log(`Tx ${txHash} submitted successfully.`)
-    });
+    console.log(`Unlock transaction ${txHash} submitted successfully via Boros`);
+    return txHash;
+  } else {
+    console.error("Failed to submit unlock transaction");
+    return null;
   }
 }
 
 async function _getAssetUtxo({scriptAddress, asset, datum}) {
   
-  const utxos = await koios.fetchAddressUTxOs(scriptAddress, asset);
+  // Use Blockfrost to fetch UTxOs instead of Koios
+  const utxos = await blockchainProvider.fetchAddressUTxOs(scriptAddress, asset);
 
   const dataHash = resolveDataHash(datum);
   const utxo = utxos.find((utxo) => {

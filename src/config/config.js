@@ -36,12 +36,13 @@ module.exports = {
   },
   cardano: {
     adminPrivateKey: envVars.CARDANO_ADMIN_PRIVATE_KEY,
+    adminMnemonic: envVars.CARDANO_ADMIN_MNEMONIC,
     blockfrost: {
       baseUrl: envVars.BLOCKFROST_BASE_URL,
       projectId: envVars.BLOCKFROST_PROJECT_ID,
     },
-    koios: {
-      secretToken: envVars.KOIOS_SECRET_TOKEN,
+    boros: {
+      url: envVars.BOROS_URL || 'http://localhost:50051',
     },
     network: envVars.CARDANO_NETWORK,
   },
