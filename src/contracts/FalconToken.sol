@@ -6,7 +6,7 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 contract FalconToken is ERC20 {
     address public admin;
 
-    constructor() ERC20("Wrapped FALCON", "wFALCON") {
+    constructor() ERC20("Test Wrapped FALCON", "Test wFALCON") {
         admin = msg.sender;
     }
 
