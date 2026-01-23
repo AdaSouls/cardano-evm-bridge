@@ -136,7 +136,7 @@ async function unlockAldeaTokens(amount, to, nonce) {
       .spendingPlutusScriptV3()
       .txIn(assetUtxo.input.txHash, assetUtxo.input.outputIndex, assetUtxo.output.amount, assetUtxo.output.address)
       .txInInlineDatumPresent()
-      .txInRedeemerValue(mConStr0([adminHash]))
+      .txInRedeemerValue(mConStr0([]))
       .txInScript(script.code)
       .txOut(to, assetUtxo.output.amount)
       .changeAddress(changeAddress)
