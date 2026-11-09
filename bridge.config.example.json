@@ -1,0 +1,60 @@
+{
+  "$schema": "./docs/bridge.config.schema.json",
+  "worldId": "example-world",
+  "mode": "burn-and-mint",
+
+  "cardano": {
+    "network": "preprod",
+    "asset": {
+      "policyId": "<56 hex chars>",
+      "assetNameHex": "<asset name, hex>",
+      "decimals": 6
+    },
+    "burn": {
+      "method": "policy-burn",
+      "_comment": "policy-burn: the minting policy allows negative mints. unspendable-sink: the policy is locked, so 'burn' means sending to the always_fail script address below.",
+      "sinkScriptAddress": null
+    },
+    "metadataLabel": 674,
+    "_metadata": "The burn tx carries CIP-20 metadata {msg:[\"world:<worldId>\", \"to:<evm address>\"]}. The attester reads the recipient from here.",
+    "indexer": {
+      "provider": "koios",
+      "baseUrl": "https://preprod.koios.rest/api/v1",
+      "confirmations": 15
+    }
+  },
+
+  "world": {
+    "chainId": 84532,
+    "name": "base-sepolia",
+    "rpcUrl": "https://sepolia.base.org",
+    "token": {
+      "name": "Example World Token",
+      "symbol": "wEXAMPLE",
+      "decimals": 18
+    },
+    "minter": {
+      "address": null,
+      "admin": "<Safe address: can pause, change caps, rotate attesters>",
+      "attesters": [
+        "<EOA or Safe #1>",
+        "<EOA or Safe #2>",
+        "<EOA or Safe #3>"
+      ],
+      "threshold": 2,
+      "caps": {
+        "perAttestation": "100000",
+        "per24h": "500000",
+        "total": "10000000",
+        "_unit": "whole tokens; the deploy script scales by token.decimals"
+      }
+    }
+  },
+
+  "attesterAgent": {
+    "_comment": "The AdaSouls agent that watches Cardano and proposes attestations. It signs at most ONE of the N attester signatures and never holds the admin role. Its ALMA identity and limits come from alma.yaml.",
+    "almaManifest": "./alma.yaml",
+    "pollIntervalSeconds": 60,
+    "proposeTo": "safe-transaction-service"
+  }
+}

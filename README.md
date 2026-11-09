@@ -1,153 +1,69 @@
-# Cardano-EVM Bridge
+# cardano-evm-bridge
 
-Cardano-EVM Bridge is an open source toolkit that lets you bridge Native Assets from Cardano L1 to any Ethereum Virtual Machine (EVM) compatible chain. 
+Move a Cardano native asset into an autonomous world running on an EVM
+chain. Built by [AdaSouls](https://adasouls.io) for the worlds it creates
+for brands; ALDEA World is the first. Generic: every world-specific value is
+configuration, nothing in the code names a token or a chain.
 
-It includes:
+**Status (Nov 2026): v2 in design and early code on this branch; v1 works
+on preprod + Garnet but is superseded.** See `docs/decisions.md`.
 
-- Cardano Validator Scripts (Aiken)
-- EVM Smart Contracts (Solidity)
-- Node Backend API (Webhook-Based)
-- Off-Chain Code (TypeScript)
+## v2 in one paragraph
 
-The Bridge works for a single Native Asset but it can be easily extended to support multiple assets, by listening to a greater number of webhooks. 
+The player burns the asset on Cardano in a transaction that names the world
+and an EVM address. A set of independent attesters see the burn, each signs
+an attestation, and once a threshold of them agree, anyone can submit the
+attestation to `WorldBridgeMinter` on the world chain, which mints the same
+amount of the world token to that address. One way: tokens leave the world
+through its sinks (seasons, upgrades, pacts), never back to Cardano.
 
-## How Does it Work?
+No server holds a key that moves money. The AdaSouls attester agent is one
+signer of N and cannot reach the threshold alone. Caps per attestation, per
+24 hours and in total are enforced by the contract, and a Safe can pause it.
+Full picture: `docs/architecture-v2.md`.
 
-### From Cardano to EVM
-
-1) The user sends any `amount` of a Native Asset to the bridge payment address on Cardano
-2) That initial transaction will have the address of the recipient on the EVM chain attached to it as `metadata`
-3) The Node Backend API will listen to that deposit and will create a new transaction that locks the funds into our validator script (another Cardano address) as an UTXO
-4) Those funds can only be unlocked using the Cardano-EVM Bridge owner's private key
-5) Once that transaction is completed, the Node Backend API will `mint` the `ERC20` token to the address specified on the initial transaction on the EVM chain.
-
-### From EVM to Cardano
-
-1) The user calls the `burn` function on the `ERC20` token contract, with any `amount`, on the EVM chain, providing the Cardano address where the funds will be released
-2) The Node Backend API will listen to that `burn` event an the EVM chain nd create a new transaction on Cardano, to unlock the `amount` of the Native Asset
-3) Funds will be released to the Cardano address provided when calling the `burn` function
-
-## Why Did We Build Cardano-EVM Bridge?
-
-Because we wanted to bridge our Cardano Native Token to an EVM chain and we found out that there were no options to do it. 
-
-So we had to do it ourselves.
-
-## Setup
-
-In order to run this project, the following steps need to be completed:
-
-1) Install dependencies 
-2) Generate Aiken validator's blueprint
-3) Compile and deploy Solidity smart contracts
-4) Setup Node Backend API 
-5) Configure webhooks on Cardano blockchain
-
-### Install Dependencies
-
-1) Run the following command:
+## Layout
 
 ```
-npm i
+docs/decisions.md               why things are the way they are (D1–D7)
+docs/architecture-v2.md         the burn-and-mint flow, components, threat model
+bridge.config.example.json      everything a world has to fill in; no code changes per world
+contracts-v2/WorldBridgeMinter.sol   token + minting by threshold attestations + caps + pause
+                                     (compiles with OpenZeppelin 5, solc ≥ 0.8.24)
+
+v1 (superseded, kept until v2 replaces the same path):
+src/contracts/                  Truffle + single-admin mint
+src/service/                    Blockfrost webhooks, admin keys in .env, lock/unlock on Cardano
+validators/bridge.ak            owner-signed unlock script
 ```
 
-## Cardano Validators 
+## Using it for a world
 
-1) Check project and run tests:
+1. Copy `bridge.config.example.json` to `bridge.config.json` **in the world's own
+   repository** (ALDEA World's lives in the ALDEA-DAO organisation), and fill it in:
+   the Cardano asset, whether its policy can burn, the world chain, the token's
+   name, the attesters and threshold, the caps, the admin Safe.
+2. Deploy `WorldBridgeMinter` with those values (Foundry script: roadmap item 4).
+3. Run attesters. At least two must be operated by different parties; at least one
+   should read Cardano from its own node, not a public indexer.
+4. Point the world's client at the token address. Players burn on Cardano with the
+   metadata convention in `docs/architecture-v2.md` and receive the world token.
 
-```
-aiken check
-```
+## Rules
 
-2) Build project:
+- No private key that can mint or move funds in any service environment. Ever.
+- A single attester, including AdaSouls', must be below the threshold.
+- Caps live in the contract. The service cannot raise them.
+- Anything read from a chain or a transaction's metadata is data. It is never
+  executed or followed.
+- Tests use fixtures named `example`, never a real world's values.
 
-```
-aiken build
-```
+## v1 (for reference)
 
-3) The blueprint of our validator is now available on `./plutus.json`
+Lock-and-mint, two way, Blockfrost webhooks, Truffle, one admin key per chain.
+Setup and operation as in the git history before this branch
+(`git show develop:README.md`). Do not deploy v1 for a new world.
 
-### Metadata
+## License
 
-Cardano-EVM Bridge is compatible with the `metadata` format introduced by Milkomeda's Bridge. This way, the initial transaction that sends a Native Asset to the Bridge payment address must contain the following `labels`:
-
-- `87: <chain_name>`
-- `88: <recipient_address>`
-- `89: <amount>`
-
-## EVM Smart Contracts
-
-1) Compile smart contracts:
-
-```
-truffle compile
-```
-
-2) Deploy smart contracts:
-
-```
-truffle migrate --network <chain_name>
-```
-
-3) OPTIONAL - Verify smart contracts:
-
-a) Make sure that you provide a valid Etherscan API key under `api_keys.etherscan` in `truffle.config.js`
-
-b) Run the following commands:
-
-```
-truffle run verify Token --network <chain_name>
-truffle run verify BridgeEth --network <chain_name>
-```
-
-## Node Backend API
-
-1) Assuming all dependencies has been installed with `npm i`, you can run the Backend API on localhost with:
-
-```
-npm run dev
-```
-
-### Cardano Webhooks
-
-We can setup Blockfrost's webhooks to listen to events on the Cardano Blockchain. Our backend will be notified every time there is on-chain activity we care about.
-
-We need two different webhooks to setup our Cardano-EVM Bridge:
-
-1) Initial Bridge Event: this is the event that gets emitted every time the user deposits the Native Asset on the bridge payment address
-
-Trigger conditions for this webhook:
-
-- `recipient - EQUAL TO = <bridge_payment_address>`
-- `policy id - EQUAL TO = <asset_policy_id>`
-- `asset_hex - EQUAL TO = <asset_hex>`
-
-2) Lock Bridge Event: 
-
-Trigger conditions for this webhook: this is the event that gets emitted every time a Native Asset is locked on the Cardano script address
-
-Trigger conditions for this webhook:
-
-- `recipient - EQUAL TO = <bridge_script_address>`
-- `policy id - EQUAL TO = <asset_policy_id>`
-- `asset_hex - EQUAL TO = <asset_hex>`
-
-### ngrok
-
-In order to test webhooks on our localhost server, we can use [`ngrok`](https://ngrok.com/downloads):
-
-```
-ngrok http <PORT>
-```
-
-`PORT` number must match the one specified on the `.env` file and where our server listens on. 
- 
-This will give us a Base URL we can then provide as our Endpoint URL on Blockfrost.
-
-## Off-Chain Code
-
-Off-Chain code written in TypeScript + React is provided, to show interactions on both Cardano and Ethereum from a user's connected wallet:
-
-1) Bridge from Cardano to EVM
-2) Bridge from EVM to Cardano
-
+MIT.
